@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { IconCloseOutlineRegular, IconRefreshOutlineRegular, IconRightUpOutlineRegular, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionScope } from '../api.ts'
-import { api, htmlUrl } from '../api.ts'
+import { api, htmlUrl, mediaUrl } from '../api.ts'
 import { t } from '../locales.ts'
 import { baseName } from '../paths.ts'
 import { resolveSidebarPath } from '../paths.ts'
@@ -22,7 +22,7 @@ import { PdfView } from '../PdfView.tsx'
 import { DiffFiles } from '../diff/DiffFiles.tsx'
 import { langOfPath } from '../diff/highlight.ts'
 import { buildDiffSegments, diffLines, diffStats, displayPath, foldRowsFromContents, parseUnifiedDiff, unifiedSegments, type DiffFile, type DiffRow, type FoldSegment } from '../diff/rows.ts'
-import { parseReadContent, parseReadLines, type FileOp } from './ops.ts'
+import { parseReadContent, parseReadLines, type FileOp, type ReadLine } from './ops.ts'
 import { redactText } from '../redact.ts'
 import { rewriteLocalImageUrls } from '../markdown-images.ts'
 import { markdownTextProps } from '../markdown-labels.tsx'
@@ -359,7 +359,7 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
   //    toggle between the raw/diff view and the rendered document — the same
   //    shared MarkdownText pass the editor preview uses, with local image
   //    destinations rewritten through the /sidebar/file media route. ──────
-  const mdOp = target.kind === 'op' && !target.op.isError && /\.(md|markdown|mdx)$/i.test(target.path)
+  const mdOp = target.kind === 'op' && target.op.presentOnly !== true && !target.op.isError && /\.(md|markdown|mdx)$/i.test(target.path)
   const [reading, setReading] = useState(false)
   const readingSrc = useMemo(() => {
     if (!mdOp || op === null) return ''
@@ -404,6 +404,45 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
     if (!pdfOp || target.kind !== 'op') return ''
     return resolveSidebarPath(scope.cwd, target.path)
   }, [pdfOp, scope, target])
+
+  // ── Delivered (present-tool) files: the op carries no inline content (the
+  //    file was written by code), so the pane reads the CURRENT on-disk bytes
+  //    through fs.read — session-cwd resolution and the workspace fence come
+  //    with the route. Markdown defaults to the rendered document (the toggle
+  //    flips to line-numbered source); delivered images render through the
+  //    media route; other binaries get a notice. Redaction applies to the
+  //    fetched text like any other op payload. ─────────────────────────────
+  const presentedOp = target.kind === 'op' && target.op.presentOnly === true && !target.op.isError
+  const presentedPath = presentedOp && target.kind === 'op' ? resolveSidebarPath(scope.cwd, target.path) : null
+  const [presentReading, setPresentReading] = useState(true)
+  const [presented, setPresented] = useState<
+    | { kind: 'loading' }
+    | { kind: 'error' }
+    | { kind: 'binary' }
+    | { kind: 'text'; text: string; truncated: boolean }
+  >({ kind: 'loading' })
+  useEffect(() => {
+    if (presentedPath === null) return
+    const controller = new AbortController()
+    setPresented({ kind: 'loading' })
+    api.fsRead(scope, presentedPath, controller.signal).then((outcome) => {
+      if (controller.signal.aborted) return
+      if (outcome.kind === 'text') setPresented({ kind: 'text', text: outcome.content, truncated: outcome.truncated })
+      else setPresented({ kind: 'binary' })
+    }).catch(() => { if (!controller.signal.aborted) setPresented({ kind: 'error' }) })
+    return () => { controller.abort() }
+  }, [presentedPath, scope])
+  const presentedText = useMemo(() => {
+    if (presented.kind !== 'text' || presentedPath === null) return ''
+    return redactionOn ? redactText(presentedPath, presented.text).text : presented.text
+  }, [presented, presentedPath, redactionOn])
+  const presentedMd = presentedOp && target.kind === 'op' && /\.(md|markdown|mdx)$/i.test(target.path)
+  const presentedImage = presentedOp && target.kind === 'op' && /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/i.test(target.path)
+  const presentedMediaSrc = presentedPath !== null && presentedImage ? mediaUrl(scope, presentedPath) : ''
+  const presentedRawLines = useMemo(
+    () => presentedText.split('\n').map((text, index): ReadLine => ({ line: index + 1, text })),
+    [presentedText],
+  )
 
   // Header stats for git targets come off the parsed patch text.
   const gitStats = useMemo(() => {
@@ -472,7 +511,9 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
       <div className={css.diffHead}>
         {target.kind === 'op' && (
           <span className={css.diffKind} data-kind={target.op.kind}>
-            {t(target.op.kind === 'read' ? 'changesRead' : target.op.kind === 'write' ? 'changesWrite' : 'changesEdit')}
+            {t(target.op.presentOnly === true
+              ? 'changesPresent'
+              : target.op.kind === 'read' ? 'changesRead' : target.op.kind === 'write' ? 'changesWrite' : 'changesEdit')}
           </span>
         )}
         {target.kind === 'git' && target.ref.kind === 'worktree' && (
@@ -529,6 +570,13 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
             onClick={() => { setReading(value => !value) }}
           />
         )}
+        {presentedMd && (
+          <PaneToggle
+            on={presentReading}
+            label={t(presentReading ? 'changesMdRaw' : 'changesMdReading')}
+            onClick={() => { setPresentReading(value => !value) }}
+          />
+        )}
         {htmlOp && (
           <PaneToggle
             on={rendering}
@@ -553,7 +601,27 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
           <IconCloseOutlineRegular size={14} />
         </button>
       </div>
-      {target.kind === 'op' && htmlOp && rendering && htmlRenderSrc !== ''
+      {target.kind === 'op' && presentedOp
+        ? presented.kind === 'loading'
+          ? <div className={css.paneBody}><div className={css.gitPlaceholder}>{t('changesPresentLoading')}</div></div>
+          : presented.kind === 'error'
+          ? <div className={css.paneBody}><div className={css.readError} role="alert">{t('changesPresentMissing')}</div></div>
+          : presented.kind === 'binary'
+          ? presentedImage && presentedMediaSrc !== ''
+            ? (
+              <div className={css.paneBody}>
+                <img className={css.presentImage} src={presentedMediaSrc} alt={target.kind === 'op' ? target.path : ''} />
+              </div>
+            )
+            : <div className={css.paneBody}><div className={css.gitPlaceholder}>{t('changesPresentBinary')}</div></div>
+          : presentedMd && presentReading
+            ? <MdReadingView text={rewriteLocalImageUrls(presentedText, scope, target.kind === 'op' ? target.path : '', window.location.origin)} />
+            : (
+              <div className={css.paneBody}>
+                <ReadRows lines={presentedRawLines} lang={opLang} />
+              </div>
+            )
+        : target.kind === 'op' && htmlOp && rendering && htmlRenderSrc !== ''
         ? <HtmlRenderPreview src={htmlRenderSrc} title={target.path} />
         : target.kind === 'op' && pdfOp && renderingPdf && pdfRenderPath !== ''
         ? (

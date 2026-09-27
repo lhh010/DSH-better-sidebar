@@ -32,6 +32,10 @@ export interface FileOp {
   readonly content?: string
   /** For 'read': the file content returned by the tool result. */
   readonly read?: string
+  /** True for delivered files: one present-tool call's files[] entry. The op
+   *  carries no inline content (the file was written by code), so the preview
+   *  reads the current on-disk bytes instead. */
+  readonly presentOnly?: boolean
 }
 
 /** Tool names mapped to each op kind; unknown names are ignored. */
@@ -136,12 +140,51 @@ function resultIsError(message: ToolResultMessageLike): boolean {
  * @param events - the session's append-only event log (oldest → newest).
  * @returns the ordered operation list.
  */
+/** Apply one tool result to its op: settles running/error and attaches the
+ * payload where the op kind carries one. Delivered files never take inline
+ * content — the present result's confirmation text is not file content, so
+ * the on-disk fetch stays authoritative. */
+function settleOp(op: FileOp, text: string | undefined, isError: boolean): FileOp {
+  const patch: { running: boolean; isError: boolean; errorText?: string; read?: string; content?: string } = { running: false, isError }
+  if (text !== undefined && text.length > 0) {
+    if (isError) patch.errorText = text
+    else if (op.presentOnly !== true) {
+      if (op.kind === 'read') patch.read = text
+      else if (op.kind === 'write' && op.content === undefined) patch.content = text
+    }
+  }
+  return { ...op, ...patch }
+}
+
 export function extractFileOps(events: readonly SidebarSessionEvent[]): FileOp[] {
   const byCall = new Map<string, FileOp>()
   for (const event of events) {
     if (event.type === 'tool/call') {
       const data = event.data as { name?: unknown; callId?: unknown; arguments?: unknown }
       if (typeof data.name !== 'string' || typeof data.callId !== 'string') continue
+      // Delivered files: one present call declares a files[] array; expand to
+      // one write op per file under a composite key (the call's single result
+      // settles every entry).
+      if (data.name === 'present') {
+        const args = parseArgs(typeof data.arguments === 'string' ? data.arguments : '')
+        const files: unknown = args.files
+        if (!Array.isArray(files)) continue
+        for (const entry of files) {
+          if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) continue
+          const delivered = (entry as Record<string, unknown>).path
+          if (typeof delivered !== 'string' || delivered.length === 0) continue
+          byCall.set(`${data.callId}\u0000${delivered}`, {
+            callId: data.callId,
+            kind: 'write',
+            path: delivered,
+            time: event.time,
+            running: true,
+            isError: false,
+            presentOnly: true,
+          })
+        }
+        continue
+      }
       const kind = kindOf(data.name)
       if (kind === undefined) continue
       const args = parseArgs(typeof data.arguments === 'string' ? data.arguments : '')
@@ -167,17 +210,18 @@ export function extractFileOps(events: readonly SidebarSessionEvent[]): FileOp[]
       if (message === undefined) continue
       const callId = message.source?.callId
       if (typeof callId !== 'string') continue
-      const op = byCall.get(callId)
-      if (op === undefined) continue
       const text = resultText(message)
       const isError = resultIsError(message)
-      const patch: { running: boolean; isError: boolean; errorText?: string; read?: string; content?: string } = { running: false, isError }
-      if (text !== undefined && text.length > 0) {
-        if (isError) patch.errorText = text
-        else if (op.kind === 'read') patch.read = text
-        else if (op.kind === 'write' && op.content === undefined) patch.content = text
+      const op = byCall.get(callId)
+      if (op !== undefined) {
+        byCall.set(callId, settleOp(op, text, isError))
+        continue
       }
-      byCall.set(callId, { ...op, ...patch })
+      // Delivered files live under composite keys; the one result settles all.
+      const prefix = `${callId}\u0000`
+      for (const [key, entry] of byCall) {
+        if (key.startsWith(prefix)) byCall.set(key, settleOp(entry, text, isError))
+      }
     }
   }
   return [...byCall.values()].sort((a, b) => b.time - a.time)

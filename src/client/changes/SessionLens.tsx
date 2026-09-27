@@ -94,7 +94,7 @@ export function SessionLens({ ops, loadError, onPreview, selectedCallId }: Sessi
                 onClick={() => { onPreview(path, op) }}
               >
                 <span className={css.opKind} data-kind={op.kind}>
-                  {t(op.kind === 'read' ? 'changesRead' : op.kind === 'write' ? 'changesWrite' : 'changesEdit')}
+                  {t(op.presentOnly === true ? 'changesPresent' : op.kind === 'read' ? 'changesRead' : op.kind === 'write' ? 'changesWrite' : 'changesEdit')}
                 </span>
                 {op.running && <span className={css.opFlag}>{t('changesRunning')}</span>}
                 {op.isError && <span className={css.opFlagError}>{t('changesError')}</span>}

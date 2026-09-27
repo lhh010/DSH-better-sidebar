@@ -405,3 +405,12 @@
 @media (prefers-reduced-motion: reduce) {
   .gitRow { animation: none; }
 }
+
+/* A delivered image: the media route serves the bytes; the pane frames it. */
+.presentImage {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  margin: 0 auto;
+  object-fit: contain;
+}

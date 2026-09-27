@@ -188,3 +188,52 @@ describe('ported diff/highlight engines (sanity)', () => {
     expect(code.tokens).toContainEqual({ text: '// done', type: 'comment' })
   })
 })
+
+describe('present deliveries', () => {
+  it('expands one present call into one write op per delivered file', () => {
+    const ops = extractFileOps([
+      call(1, 'present', 'p1', { files: [{ path: 'docs/report.md', description: 'd1' }, { path: 'out/chart.png', description: 'd2' }] }),
+      result(2, 'p1', 'presented 2 files'),
+    ])
+    expect(ops).toHaveLength(2)
+    for (const op of ops) {
+      expect(op.kind).toBe('write')
+      expect(op.presentOnly).toBe(true)
+      expect(op.running).toBe(false)
+      expect(op.isError).toBe(false)
+      // The present result's confirmation text is not file content: the
+      // on-disk fetch stays authoritative.
+      expect(op.content).toBeUndefined()
+    }
+    expect(new Set(ops.map(op => op.path))).toEqual(new Set(['docs/report.md', 'out/chart.png']))
+  })
+
+  it('ignores malformed present payloads', () => {
+    expect(extractFileOps([call(1, 'present', 'p', { files: 'not-an-array' })])).toHaveLength(0)
+    expect(extractFileOps([call(2, 'present', 'p', { files: [{ description: 'no-path' }] })])).toHaveLength(0)
+    expect(extractFileOps([call(3, 'present', 'p', { files: [{ path: '' }] })])).toHaveLength(0)
+    expect(extractFileOps([call(4, 'present', 'p', {})])).toHaveLength(0)
+  })
+
+  it('settles running delivered files from the result and keeps them grouped by path', () => {
+    const ops = extractFileOps([
+      call(1, 'present', 'p1', { files: [{ path: 'a.md' }, { path: 'b.md' }] }),
+    ])
+    expect(ops).toHaveLength(2)
+    expect(ops.every(op => op.running)).toBe(true)
+    const grouped = groupByFile(ops)
+    expect([...grouped.keys()]).toEqual(['a.md', 'b.md'])
+  })
+
+  it('records the error text on every delivered file of a failed present', () => {
+    const ops = extractFileOps([
+      call(1, 'present', 'p1', { files: [{ path: 'a.md' }, { path: 'b.md' }] }),
+      result(2, 'p1', 'present failed: file not found', true),
+    ])
+    expect(ops).toHaveLength(2)
+    for (const op of ops) {
+      expect(op.isError).toBe(true)
+      expect(op.errorText).toBe('present failed: file not found')
+    }
+  })
+})
