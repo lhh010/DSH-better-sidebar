@@ -2,6 +2,10 @@
 
 > Full release history of dsh-better-sidebar (see the [README](README_EN.md) for the latest release; also mirrored on [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)).
 
+### v0.25.1
+
+> 📦 **Support declaration: verified against DSH `0.2.1-alpha.2`** (npm dist-tag `alpha`). The v0.25.0 peer floor `^0.2.0-rc.2` already admits same-minor prereleases under semver prerelease rules, so this release is a pure declaration and documentation change with zero runtime changes. Verification record: on the upgraded global `@deepseek-ai/dsh@0.2.1-alpha.2`, the web profile loads every plugin row via `--dump-config` with the host startup compatibility precheck reporting zero errors and zero silent disables; the sidebar passed a manual walkthrough. CI and the mount lane still pin `@deepseek-ai/dsh@0.2.0-rc.2` (`latest`); pins move together once DSH stabilizes a final release.
+
 ### v0.24.1
 
 > 🎁 **This release carries everything since v0.22.1** (the Files/Changes UI-UX rebuild and performance work of v0.23.0, the DSH 0.2.0-rc.1 support-line move of v0.24.0, and the fixes below).

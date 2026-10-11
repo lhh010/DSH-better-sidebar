@@ -2,6 +2,10 @@
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
+### v0.25.1
+
+> 📦 **支持面声明：实测通过 DSH `0.2.1-alpha.2`**（npm dist-tag `alpha`）。v0.25.0 的 peer 下限 `^0.2.0-rc.2` 在 semver 预发布规则下本就容纳同 minor 的 `0.2.1-alpha.1/alpha.2`，因此本版是**纯声明与文档变更，运行时零改动**。实测记录：升级后的全局 `@deepseek-ai/dsh@0.2.1-alpha.2` 上，web profile `--dump-config` 全插件行加载、宿主启动兼容性预检零错误零静默禁用；真机启动监听正常，侧栏功能人工走查通过。CI 与挂载 lane 仍钉 `@deepseek-ai/dsh@0.2.0-rc.2`（`latest`）；alpha 通道的挂载验证以本条实测记录为准，待 DSH 正式版稳定后再统一前移钉版。
+
 ### v0.25.0
 
 > 📦 **支持线前移：仅适配 DSH `0.2.0-rc.2+`**（peer 下限 `^0.2.0-rc.2`，CI 与挂载 lane 钉 `@deepseek-ai/dsh@0.2.0-rc.2`）。DSH 的 npm `latest` 现在正是 **0.2.0-rc.2**（不再停在 0.1.7-rc.2），本版就钉在它上面。**0.2.0-rc.1 及更早（含 0.1.7 线）请固定 v0.24.1**——`^0.2.0-rc.2` 对 rc.1 判定为 false，会被宿主的启动兼容性预检整行静默禁用；0.1.7 线的最后支持版是 v0.22.1。本次前移是一次纯声明与钉版变更：0.2.0-rc.2 对本插件消费的宿主面仍是纯增量，运行时零改动。
