@@ -1326,9 +1326,20 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   const webTrust = (): SidebarWebRuntime | undefined => {
     const stub = (ctx as { webRuntime?: SidebarWebRuntime }).webRuntime
     if (stub !== undefined) return stub
-    const startup = ctx.get('webStartup', false) as SidebarWebRuntime | undefined
+    // Store probes are guarded: a context whose `get` predates the
+    // strictness argument (or throws for absent services) degrades to the
+    // empty list rather than taking the fence down with it.
+    const fromStore = (name: string): SidebarWebRuntime | undefined => {
+      try {
+        const value = (ctx as { get?: (n: string, strict?: boolean) => unknown }).get?.(name, false)
+        return value === undefined || value === null ? undefined : value as SidebarWebRuntime
+      } catch {
+        return undefined
+      }
+    }
+    const startup = fromStore('webStartup')
     if (startup !== undefined) return startup
-    return ctx.get('webRuntime', false) as SidebarWebRuntime | undefined
+    return fromStore('webRuntime')
   }
   // The web runtime's bind-derived trust list (boot-sampled LAN literals
   // plus --trusted-host authorities) — the authoritative source the /api
