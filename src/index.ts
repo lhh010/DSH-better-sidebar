@@ -1324,11 +1324,11 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // list — the fence still accepts loopback hosts, which is the only kind
   // such a deployment serves.
   const webTrust = (): SidebarWebRuntime | undefined => {
-    const stub = (ctx as { webRuntime?: SidebarWebRuntime }).webRuntime
-    if (stub !== undefined) return stub
-    // Store probes are guarded: a context whose `get` predates the
-    // strictness argument (or throws for absent services) degrades to the
-    // empty list rather than taking the fence down with it.
+    // Store probes first — `get` reads the store without the inject
+    // requirement, so the live service resolves on hosts that still
+    // mount it. Probes are guarded: a context whose `get` predates the
+    // strictness argument (or throws for undeclared names) degrades to
+    // undefined instead of taking the fence down with it.
     const fromStore = (name: string): SidebarWebRuntime | undefined => {
       try {
         const value = (ctx as { get?: (n: string, strict?: boolean) => unknown }).get?.(name, false)
@@ -1339,7 +1339,17 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     }
     const startup = fromStore('webStartup')
     if (startup !== undefined) return startup
-    return fromStore('webRuntime')
+    const runtime = fromStore('webRuntime')
+    if (runtime !== undefined) return runtime
+    // Property access LAST and guarded: unit-test stubs assign
+    // `ctx.webRuntime` directly (no `get`), while some cordis versions
+    // throw "cannot get property without inject" for a declared service
+    // that is no longer in this plugin's inject list.
+    try {
+      return (ctx as { webRuntime?: SidebarWebRuntime }).webRuntime
+    } catch {
+      return undefined
+    }
   }
   // The web runtime's bind-derived trust list (boot-sampled LAN literals
   // plus --trusted-host authorities) — the authoritative source the /api
