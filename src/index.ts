@@ -19,7 +19,7 @@ import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { WebSocket, WebSocketServer } from 'ws'
 import { parse as parseYaml } from 'yaml'
-import type { Context, SidebarHttpRequest, SidebarSessionEvent, SidebarSettingsService } from './context-types.ts'
+import type { Context, SidebarHttpRequest, SidebarSessionEvent, SidebarSettingsService, SidebarWebRuntime } from './context-types.ts'
 import {
   Config,
   resolveSidebarConfig,
@@ -110,8 +110,13 @@ export interface SidebarFsLevel {
   error?: string
 }
 
-/** Services required before mounting: the webserver routes, the session store, the web runtime's trusted hosts, and the tool registry. */
-export const inject = ['webServer', 'sessions', 'webRuntime', 'tools']
+/** Services required before mounting: the webserver routes, the session
+ * store, and the tool registry. The web trust face is resolved per request
+ * (see `webTrust` at the fence) instead of injected: DSH 0.2.1-alpha renamed
+ * the service (`webRuntime` → `webStartup`) and 0.2.1-alpha.2 removed the
+ * old name, and an inject entry for a name the host no longer mounts leaves
+ * the plugin pending forever with a clean `--dump-config` (issue #931). */
+export const inject = ['webServer', 'sessions', 'tools']
 
 /** Content types for the media route, by extension. */
 const MEDIA_TYPES: Record<string, string> = {
@@ -1303,18 +1308,33 @@ async function importLegacyPrefs(
 
 /**
  * Plugin body: mount the fenced routes and the sidebar_open push socket.
- * @param ctx - host plugin context (webServer, sessions, webRuntime).
+ * @param ctx - host plugin context (webServer, sessions).
  * @param config - deployment-provided limits; the Loader validates against
  * {@link Config} and fills defaults, direct callers get them from
  * {@link resolveSidebarConfig}.
  */
 export function apply(ctx: Context, config?: SidebarConfig): void {
   const resolved = resolveSidebarConfig(config)
+  // The web trust face across host generations: the `webRuntime` property
+  // first (test stubs assign it directly), then the live service store —
+  // `webStartup` on DSH 0.2.1-alpha.1+, `webRuntime` on the 0.2.0 line.
+  // Not an inject entry: a renamed-or-removed service name in the inject
+  // list stalls the plugin pending forever while `--dump-config` stays
+  // clean (issue #931). A deployment exposing neither face keeps the empty
+  // list — the fence still accepts loopback hosts, which is the only kind
+  // such a deployment serves.
+  const webTrust = (): SidebarWebRuntime | undefined => {
+    const stub = (ctx as { webRuntime?: SidebarWebRuntime }).webRuntime
+    if (stub !== undefined) return stub
+    const startup = ctx.get('webStartup', false) as SidebarWebRuntime | undefined
+    if (startup !== undefined) return startup
+    return ctx.get('webRuntime', false) as SidebarWebRuntime | undefined
+  }
   // The web runtime's bind-derived trust list (boot-sampled LAN literals
   // plus --trusted-host authorities) — the authoritative source the /api
   // gateway fence derives its list from. Read per request from the live
   // service value; a replaced list takes effect without a plugin restart.
-  const fence = (req: SidebarHttpRequest): boolean => isTrustedApiRequest(req, ctx.webRuntime.trustedHosts)
+  const fence = (req: SidebarHttpRequest): boolean => isTrustedApiRequest(req, webTrust()?.trustedHosts ?? [])
   // The model-facing open-request registry: queues `sidebar_open` requests
   // per session and pushes them to connected sidebar views over the
   // `/sidebar/ws/agent-opens` socket.
